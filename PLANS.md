@@ -1,4 +1,12 @@
-# Initial research
+## Initial research
 
-- [ ] Refresh access/refresh token knowledge
+- [x] Refresh access/refresh token knowledge
 - [ ] Explore Gin docs more
+
+## The thing
+
+## Finalization
+
+- [ ] GIN-debug messages
+- [ ] Serve in release mode
+- [ ] Handle TODOs
