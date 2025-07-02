@@ -14,7 +14,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func connect_to_postgres() (*pgx.Conn, error) {
+func init_postgres() (*pgx.Conn, error) {
+    // TODO log initializing postgres
+
     user := os.Getenv("POSTGRES_USER")
     if user == "" {
         return nil, fmt.Errorf("$POSTGRES_USER not set")
@@ -32,22 +34,29 @@ func connect_to_postgres() (*pgx.Conn, error) {
         return nil, err
     }
 
+    _, err = postgres.Exec(context.Background(), `
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+            token CHAR(60) NOT NULL,
+            expires TIMESTAMP NOT NULL
+        );
+    `)
+
+    if err != nil {
+        return nil, err
+    }
+
+    // TODO log connected to version X
+
     return postgres, nil
 }
 
 func main() {
-    postgres, err := connect_to_postgres()
+    postgres, err := init_postgres()
     if err != nil {
         panic(err.Error())  // TODO log
     }
     defer postgres.Close(context.Background())
-
-    var version string
-    err = postgres.QueryRow(context.Background(), "SELECT VERSION()").Scan(&version)
-    if err != nil {
-        panic(err.Error())
-    }
-    fmt.Println(version)
 
     g := gin.Default()
 
@@ -57,6 +66,8 @@ func main() {
             c.JSON(http.StatusBadRequest, gin.H{"error": "missing `guid` query parameter"})
             return
         }
+
+        // TODO validate GUID
 
         now := time.Now().Unix()
 
@@ -80,7 +91,15 @@ func main() {
             panic(err.Error())
         }
 
-        _ = refresh_hash  // TODO postgres
+        _, err = postgres.Exec(context.Background(), `
+            INSERT INTO refresh_tokens (token, expires)
+            VALUES ($1, $2);
+        `, refresh_hash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
+
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+            return
+        }
 
         c.JSON(http.StatusOK, gin.H{
             "access": access,
