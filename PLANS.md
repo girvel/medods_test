@@ -1,12 +1,18 @@
 ## Initial research
 
 - [x] Refresh access/refresh token knowledge
-- [ ] Explore Gin docs more
+- [x] Explore Gin docs more
 
-## The thing
+## The main part
+
+- [x] Set up docker
+- [ ] Access/refresh POC
+- [ ] Connect postgres
 
 ## Finalization
 
+- [ ] Logging (gin and built-in, figure out)
 - [ ] GIN-debug messages
 - [ ] Serve in release mode
-- [ ] Handle TODOs
+- [ ] Resolve TODOs
+- [ ] Read more on context module
