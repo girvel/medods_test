@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
-    "os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -14,7 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func initPostgres() (*pgx.Conn, error) {
+func InitPostgres() (*pgx.Conn, error) {
     // TODO log initializing postgres
 
     user := os.Getenv("POSTGRES_USER")
@@ -51,10 +52,54 @@ func initPostgres() (*pgx.Conn, error) {
     return postgres, nil
 }
 
-func AuthMiddleware()
+func AuthMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        authHeader := c.GetHeader("Authorization")
+        if authHeader == "" {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": "Authorization header missing",
+            })
+            return
+        }
+
+        tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+        if tokenString == authHeader {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": "'Bearer ' prefix missing",
+            })
+            return
+        }
+
+        // notice: handles token expiration automatically
+        token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+                return nil, jwt.ErrSignatureInvalid
+            }
+            return []byte("TODO-private-key"), nil
+        })
+
+        if err != nil || !token.Valid {
+            var reason string
+            if err != nil {
+                reason = err.Error()
+            } else {
+                reason = "Invalid token"
+            }
+
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": reason,
+            })
+            return
+        }
+
+        claims := token.Claims.(jwt.MapClaims)
+        c.Set("guid", claims["sub"])
+        c.Next()
+    }
+}
 
 func main() {
-    postgres, err := initPostgres()
+    postgres, err := InitPostgres()
     if err != nil {
         panic(err.Error())  // TODO log
     }
@@ -62,7 +107,7 @@ func main() {
 
     g := gin.Default()
 
-    g.POST("/login", func (c *gin.Context) {
+    g.POST("/login", func(c *gin.Context) {
         guid := c.Query("guid")
         if guid == "" {
             c.JSON(http.StatusBadRequest, gin.H{"error": "missing `guid` query parameter"})
@@ -111,8 +156,8 @@ func main() {
         })
     })
 
-    g.GET("/guid", func (c *gin.Context) {
-        
+    g.GET("/guid", AuthMiddleware(), func(c *gin.Context) {
+        c.JSON(http.StatusOK, gin.H{"guid": c.MustGet("guid")})
     })
 
     g.Run()
