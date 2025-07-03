@@ -35,9 +35,11 @@ func InitPostgres() (*pgx.Conn, error) {
         return nil, err
     }
 
+    // TODO guid as primary key
     _, err = postgres.Exec(context.Background(), `
         CREATE TABLE IF NOT EXISTS refresh_tokens (
             id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+            guid CHAR(20) NOT NULL,
             token CHAR(60) NOT NULL,
             expires TIMESTAMP NOT NULL
         );
@@ -50,6 +52,33 @@ func InitPostgres() (*pgx.Conn, error) {
     // TODO log connected to version X
 
     return postgres, nil
+}
+
+// returns both guid and error if expired
+func validateAccessToken(tokenString string) (guid string, err error) {
+    // notice: handles token expiration automatically
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, jwt.ErrSignatureInvalid
+        }
+        return []byte("TODO-private-key"), nil
+    })
+
+    if token == nil {
+        return "", err
+    }
+
+    if claims, ok := token.Claims.(jwt.MapClaims); ok {
+        if sub, ok := claims["sub"]; ok {
+            return sub.(string), err
+        }
+    }
+
+    if err != nil {
+        return "", err
+    } else {
+        return "", fmt.Errorf("Invalid token")
+    }
 }
 
 func AuthMiddleware() gin.HandlerFunc {
@@ -70,32 +99,29 @@ func AuthMiddleware() gin.HandlerFunc {
             return
         }
 
-        // notice: handles token expiration automatically
-        token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-                return nil, jwt.ErrSignatureInvalid
-            }
-            return []byte("TODO-private-key"), nil
-        })
-
-        if err != nil || !token.Valid {
-            var reason string
-            if err != nil {
-                reason = err.Error()
-            } else {
-                reason = "Invalid token"
-            }
-
+        guid, err := validateAccessToken(tokenString)
+        if err != nil {
             c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-                "error": reason,
+                "error": err.Error(),
             })
             return
         }
 
-        claims := token.Claims.(jwt.MapClaims)
-        c.Set("guid", claims["sub"])
+        c.Set("guid", guid)
         c.Next()
     }
+}
+
+func issueAccessToken(guid string) (string, error) {
+    now := time.Now().Unix()
+
+    return jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
+        "iss": "medods-auth-service",
+        "sub": guid,
+        "iat": now,
+        "exp": now + 30,  // short for testing purposes
+        // TODO consider parametrizing through .env
+    }).SignedString([]byte("TODO-private-key"))
 }
 
 func main() {
@@ -115,23 +141,14 @@ func main() {
         }
 
         // TODO validate GUID
-
-        now := time.Now().Unix()
-
-        access, err := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
-            "iss": "medods-auth-service",
-            "sub": guid,
-            "iat": now,
-            "exp": now + 30,  // short for testing purposes
-            // TODO consider parametrizing through .env
-        }).SignedString([]byte("TODO-private-key"))
+        access, err := issueAccessToken(guid)
 
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
             return
         }
 
-        refresh := uuid.New().String()
+        refresh := uuid.New().String()  // TODO not in base64 because dashes
         refreshHash, err := bcrypt.GenerateFromPassword([]byte(refresh), 10)
 
         if err != nil {
@@ -139,9 +156,9 @@ func main() {
         }
 
         _, err = postgres.Exec(context.Background(), `
-            INSERT INTO refresh_tokens (token, expires)
-            VALUES ($1, $2);
-        `, refreshHash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
+            INSERT INTO refresh_tokens (guid, token, expires)
+            VALUES ($1, $2, $3);
+        `, guid, refreshHash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
 
         // TODO refresh token cleanup
 
@@ -153,6 +170,58 @@ func main() {
         c.JSON(http.StatusOK, gin.H{
             "access": access,
             "refresh": refresh,
+        })
+    })
+
+    type RefreshBody struct {
+        Access string `json:"access"`
+        Refresh string `json:"refresh"`
+    }
+
+    g.POST("/refresh", func(c *gin.Context) {
+        var body RefreshBody
+        if err := c.ShouldBindJSON(&body); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
+
+        guid, _ := validateAccessToken(body.Access)
+        if guid == "" {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid access token"})
+            return
+        }
+
+        var pg_refresh string
+        var expires time.Time
+        err := postgres.QueryRow(context.Background(), `
+            SELECT token, expires FROM refresh_tokens WHERE guid=$1
+        `, guid).Scan(&pg_refresh, &expires)
+
+        if err != nil {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "No refresh tokens for this GUID"})
+            return
+        }
+
+        if time.Now().After(expires) {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
+            return
+        }
+
+        if bcrypt.CompareHashAndPassword([]byte(pg_refresh), []byte(body.Refresh)) != nil {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token doesn't match"})
+            return
+        }
+
+        access, err := issueAccessToken(guid)
+
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+            return
+        }
+
+        c.JSON(http.StatusOK, gin.H{
+            "access": access,
+            // TODO issue refresh token, invalidate the old one
         })
     })
 
