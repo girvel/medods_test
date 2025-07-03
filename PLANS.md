@@ -9,8 +9,11 @@
 - [x] Access/refresh POC
 - [x] Connect postgres
 - [x] Store token
-- [ ] /guid
-- [ ] Refresh token
+- [x] /guid
+- [x] /refresh
+- [ ] Split into files
+- [ ] Do an integration test
+- [ ] Reissue refresh token on /refresh
 - [ ] User-Agent limitation
 - [ ] Webhook
 - [ ] /logout

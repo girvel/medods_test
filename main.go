@@ -1,58 +1,17 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	medods_test "github.com/girvel/medods_test/src"  // TODO rename project
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
-
-func InitPostgres() (*pgx.Conn, error) {
-    // TODO log initializing postgres
-
-    user := os.Getenv("POSTGRES_USER")
-    if user == "" {
-        return nil, fmt.Errorf("$POSTGRES_USER not set")
-    }
-
-    password := os.Getenv("POSTGRES_PASSWORD")
-    if password == "" {
-        return nil, fmt.Errorf("$POSTGRES_PASSWORD not set")
-    }
-
-    pg_address := fmt.Sprintf("postgres://%s:%s@db:5432/credentials", user, password)
-    postgres, err := pgx.Connect(context.Background(), pg_address)
-
-    if err != nil {
-        return nil, err
-    }
-
-    // TODO guid as primary key
-    _, err = postgres.Exec(context.Background(), `
-        CREATE TABLE IF NOT EXISTS refresh_tokens (
-            id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-            guid CHAR(20) NOT NULL,
-            token CHAR(60) NOT NULL,
-            expires TIMESTAMP NOT NULL
-        );
-    `)
-
-    if err != nil {
-        return nil, err
-    }
-
-    // TODO log connected to version X
-
-    return postgres, nil
-}
 
 // returns both guid and error if expired
 func validateAccessToken(tokenString string) (guid string, err error) {
@@ -125,11 +84,11 @@ func issueAccessToken(guid string) (string, error) {
 }
 
 func main() {
-    postgres, err := InitPostgres()
+    db, err := medods_test.NewPgx()
     if err != nil {
         panic(err.Error())  // TODO log
     }
-    defer postgres.Close(context.Background())
+    defer db.Close()
 
     g := gin.Default()
 
@@ -155,11 +114,8 @@ func main() {
             panic(err.Error())
         }
 
-        _, err = postgres.Exec(context.Background(), `
-            INSERT INTO refresh_tokens (guid, token, expires)
-            VALUES ($1, $2, $3);
-        `, guid, refreshHash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
-
+        err = db.SetRefreshToken(guid, refreshHash, time.Now().Add(time.Hour * 48))
+        // TODO .env parameter?
         // TODO refresh token cleanup
 
         if err != nil {
@@ -191,11 +147,7 @@ func main() {
             return
         }
 
-        var pg_refresh string
-        var expires time.Time
-        err := postgres.QueryRow(context.Background(), `
-            SELECT token, expires FROM refresh_tokens WHERE guid=$1
-        `, guid).Scan(&pg_refresh, &expires)
+        refreshHash, expires, err := db.GetRefreshToken(guid)
 
         if err != nil {
             c.JSON(http.StatusUnauthorized, gin.H{"error": "No refresh tokens for this GUID"})
@@ -207,7 +159,7 @@ func main() {
             return
         }
 
-        if bcrypt.CompareHashAndPassword([]byte(pg_refresh), []byte(body.Refresh)) != nil {
+        if bcrypt.CompareHashAndPassword([]byte(refreshHash), []byte(body.Refresh)) != nil {
             c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token doesn't match"})
             return
         }
