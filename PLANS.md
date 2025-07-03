@@ -11,8 +11,8 @@
 - [x] Store token
 - [x] /guid
 - [x] /refresh
-- [ ] Split into files
-- [ ] Do an integration test
+- [x] Split into files
+- [x] Do an integration test
 - [ ] Reissue refresh token on /refresh
 - [ ] User-Agent limitation
 - [ ] Webhook
