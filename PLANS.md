@@ -6,11 +6,18 @@
 ## The main part
 
 - [x] Set up docker
-- [ ] Access/refresh POC
-- [ ] Connect postgres
+- [x] Access/refresh POC
+- [x] Connect postgres
+- [x] Store token
+- [ ] /guid
+- [ ] Refresh token
+- [ ] User-Agent limitation
+- [ ] Webhook
+- [ ] /logout
 
 ## Finalization
 
+- [ ] Should it be possible to get an access token while there's a refresh token issued?
 - [ ] Logging (gin and built-in, figure out)
 - [ ] GIN-debug messages
 - [ ] Serve in release mode

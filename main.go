@@ -14,7 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func init_postgres() (*pgx.Conn, error) {
+func initPostgres() (*pgx.Conn, error) {
     // TODO log initializing postgres
 
     user := os.Getenv("POSTGRES_USER")
@@ -51,8 +51,10 @@ func init_postgres() (*pgx.Conn, error) {
     return postgres, nil
 }
 
+func AuthMiddleware()
+
 func main() {
-    postgres, err := init_postgres()
+    postgres, err := initPostgres()
     if err != nil {
         panic(err.Error())  // TODO log
     }
@@ -60,7 +62,7 @@ func main() {
 
     g := gin.Default()
 
-    g.POST("/token", func (c *gin.Context) {
+    g.POST("/login", func (c *gin.Context) {
         guid := c.Query("guid")
         if guid == "" {
             c.JSON(http.StatusBadRequest, gin.H{"error": "missing `guid` query parameter"})
@@ -85,7 +87,7 @@ func main() {
         }
 
         refresh := uuid.New().String()
-        refresh_hash, err := bcrypt.GenerateFromPassword([]byte(refresh), 10)
+        refreshHash, err := bcrypt.GenerateFromPassword([]byte(refresh), 10)
 
         if err != nil {
             panic(err.Error())
@@ -94,7 +96,9 @@ func main() {
         _, err = postgres.Exec(context.Background(), `
             INSERT INTO refresh_tokens (token, expires)
             VALUES ($1, $2);
-        `, refresh_hash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
+        `, refreshHash, time.Now().Add(time.Hour * 48))  // TODO .env parameter?
+
+        // TODO refresh token cleanup
 
         if err != nil {
             c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -105,6 +109,10 @@ func main() {
             "access": access,
             "refresh": refresh,
         })
+    })
+
+    g.GET("/guid", func (c *gin.Context) {
+        
     })
 
     g.Run()
